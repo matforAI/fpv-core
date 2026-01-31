@@ -10,6 +10,7 @@ from std_msgs.msg import String
 from autonomy_core.state_machine import StateMachine, State
 from autonomy_core.mission_manager import MissionManager
 from autonomy_core.target_tracker import TargetTracker
+from autonomy_core.failsafe import FailSafe
 
 
 class AutonomyCore(Node):
@@ -40,54 +41,50 @@ class AutonomyCore(Node):
         self.sm = StateMachine()
         self.mission = MissionManager(self)
         self.tracker = TargetTracker(image_width=640)
+        self.failsafe = FailSafe()
 
-        self.has_detection = False
-        self.odom_ok = False
         self.goal_sent = False
 
         self.timer = self.create_timer(0.1, self.loop)
 
-        self.get_logger().info("AUTONOMY CORE + TRACKING ONLINE")
+        self.get_logger().info("AUTONOMY CORE + FAILSAFE ONLINE")
 
     def on_detection(self, msg):
         try:
             cx, cy, w, h = msg.data.split(",")
             self.tracker.update_bbox(float(cx))
-            self.has_detection = True
+            self.failsafe.update_detection()
         except:
-            self.has_detection = False
+            pass
 
     def on_odom(self, msg):
-        self.odom_ok = True
+        self.failsafe.update_odom()
 
     def loop(self):
 
+        odom_ok = self.failsafe.odom_ok()
+        detection_alive = self.failsafe.detection_alive()
+
         state = self.sm.update(
-            has_detection=self.has_detection,
-            odom_ok=self.odom_ok
+            has_detection=detection_alive,
+            odom_ok=odom_ok
         )
 
         cmd = Twist()
 
-        # ───────────────
-        # NAVIGATION MODE
-        # ───────────────
+        # ───────── MOVE ─────────
         if state == State.MOVE:
             if not self.goal_sent:
                 self.mission.send_goal(5.0, 0.0)
                 self.goal_sent = True
 
-        # ───────────────
-        # TRACKING MODE
-        # ───────────────
+        # ───────── TRACK ─────────
         if state == State.HOLD:
             yaw_error = self.tracker.get_yaw_error()
             cmd.angular.z = -yaw_error * 1.2
             cmd.linear.x = 0.0
 
-        # ───────────────
-        # FAILSAFE
-        # ───────────────
+        # ───────── FAILSAFE ─────────
         if state == State.FAIL:
             cmd.linear.x = 0.0
             cmd.angular.z = 0.0
