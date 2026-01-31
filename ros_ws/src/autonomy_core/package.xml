@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>autonomy_core</name>
+  <version>0.0.1</version>
+  <description>FPV autonomy core</description>
+
+  <maintainer email="dev@fpv.local">fpv</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <exec_depend>python3</exec_depend>
+</package>
