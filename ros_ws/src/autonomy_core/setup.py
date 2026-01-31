@@ -20,6 +20,7 @@ setup(
     entry_points={
         'console_scripts': [
             'autonomy_core = autonomy_core.core_node:main',
+            'cmd_vel_bridge = autonomy_core.cmd_vel_bridge:main',
         ],
     },
 )
