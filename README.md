@@ -1,125 +1,127 @@
-FPV AI Drone — Autonomous Core
-Автономне ядро керування FPV-дроном на базі ROS2.
+### Автономне ядро керування FPV-дроном на базі ROS2.
+
 Система побудована за модульним принципом і працює як єдиний організм.
+
 Проєкт орієнтований на:
-автономний політ
-пошук і супровід цілей
-антиколізію
-повернення додому
-роботу в групі (swarm)
-пріоритетне прийняття рішень
-📁 Структура проєкту
-Копировать код
+- автономний політ
+- пошук і супровід цілей
+- антиколізію
+- повернення додому
+- роботу в групі (swarm)
+- пріоритетне прийняття рішень
+---
+### СТРУКТУРА ПРОЄКТУ
+ 
+     └── 📁 src
+         └── 📁 autonomy_core	 
+             └── 📁 autonomy_core
+			 
+                 ├── 🧠 core_node.py
+                 ├── 🧩 behavior_tree.py
+                 ├── 🎯 target_tracker.py
+                 ├── 🛑 anti_collision.py
+                 ├── 🏠 return_home.py
+                 ├── 🧑‍🤝‍🧑 swarm_sync.py
+                 ├── 🧭 mission_manager.py
+                 ├── ⚙️ failsafe.py
+                 ├── ❤️ health_monitor.py
+                 ├── 📦 blackbox.py
+                 ├── 🌐 web_ui.py
+                 └── 📄 __init__.py
 
-fpv-core/
-└── ros_ws/
-    └── src/
-        └── autonomy_core/
-            └── autonomy_core/
-                ├── core_node.py
-                ├── state_machine.py
-                ├── behavior_tree.py
-                ├── priority_selector.py
-                ├── mission_manager.py
-                ├── mission_loader.py
-                ├── target_tracker.py
-                ├── anti_collision.py
-                ├── return_home.py
-                ├── formation.py
-                ├── swarm_sync.py
-                ├── failsafe.py
-                ├── health_monitor.py
-                ├── cmd_vel_bridge.py
-                ├── blackbox.py
-                ├── web_ui.py
-                └── __init__.py
-🧠 Загальна архітектура
-Копировать код
+### ЗАГАЛЬНА АРХІТЕКТУРА
+- СЕНСОРИ
+- Camera (detections)
+- LIDAR / Depth (LaserScan)
+- Odometry
+- Swarm data
+  
+↓
 
-СЕНСОРИ
-Camera (detections)
-LIDAR / Depth (LaserScan)
-Odometry
-Swarm data
-        ↓
 AUTONOMY CORE NODE
-        ↓
-Behavior Tree (BT)
-        ↓
-Priority Selector
-        ↓
-Command Generator
-        ↓
+
+↓
+
+- Behavior Tree (BT)
+- Priority Selector
+- Command Generator
+  
+↓
+
 /cmd_vel_autonomy
-🔁 Центральний вузол
-core_node.py
+
+### ЦЕНТРАЛЬНИЙ ВУЗОЛ 
+— core_node.py
+
 Головний мозок системи.
-Функції:
-підписка на всі сенсори
-запуск behavior tree
-публікація команд руху
-контроль стану
-логування
-синхронізація дронів
-🌳 Behavior Tree
+
+#### Функції:
+- підписка на всі сенсори
+- запуск behavior tree
+- публікація команд руху
+- контроль стану
+- логування
+- синхронізація дронів
+---
+#### BEHAVIOR TREE
+
 Порядок виконання (зверху вниз):
-Anti-collision — найвищий пріоритет
-Return Home
-Target tracking
-Navigation
+- Anti-collision — найвищий пріоритет
+- Return Home
+- Target tracking
+- Navigation
 Якщо верхня гілка активна — нижні не виконуються.
-🚨 Anti-Collision
+
+#### ANTI-COLLISION
 Використовується LaserScan.
-Якщо мінімальна дистанція < 1.5 м:
-керування повністю перехоплюється
-швидкість обнуляється
-місія зупиняється
+Якщо мінімальна дистанція менше 1.5 м:
+- керування повністю перехоплюється
+- швидкість обнуляється
+- місія зупиняється
 Це рефлекс безпеки, а не логіка місії.
-🧭 Mission System
-mission_manager.py — надсилання цілей Nav2
-mission_loader.py — завантаження місій
-🎯 Target Tracking
+
+#### MISSION SYSTEM
+- mission_manager.py — надсилання навігаційних цілей Nav2
+- mission_loader.py — завантаження місій
+  
+#### TARGET TRACKING
 Супровід цілі по камері:
-визначення центру bounding box
-помилка yaw
-корекція кутової швидкості
-🧠 Priority Selector
+- визначення центру bounding box
+- помилка yaw
+- корекція кутової швидкості
+
+#### PRIORITY SELECTOR
 Вибір головної цілі з усіх доступних детекцій.
-🏠 Return Home
+
+#### RETURN HOME
 Збереження координат старту та повернення у разі:
-помилки сенсорів
-втрати одометрії
-failsafe
-🧑‍🤝‍🧑 Swarm System
+- втрати одометрії
+- помилок сенсорів
+- failsafe
+
+#### SWARM SYSTEM
 Обмін станами між дронами:
-позиція
-стан
-роль
-🧩 Formation Flight
+- позиція
+- стан
+- роль
+
+#### FORMATION FLIGHT
 Політ строєм:
-ведучий
-ведені
-позиційний офсет
-⚠️ FailSafe
-Активація безпечних сценаріїв при збоях.
-❤️ Health Monitor
+- ведучий
+- ведені
+- позиційний офсет
+
+#### FAILSAFE
+Активація безпечних сценаріїв при збої системи.
+
+#### HEALTH MONITOR
 Контроль активності модулів та таймінгів.
-📦 BlackBox
+
+#### BLACKBOX
 Логування всіх подій системи.
-🌐 Web UI
+
+#### WEB UI
 Flask backend:
-телеметрія
-стан системи
-місії
-✅ Поточний стан
-Реалізовано:
-автономне ядро
-behavior tree
-антиколізія
-супровід цілі
-повернення додому
-swarm-синхронізація
-формації
-health-monitor
-blackbox
-web UI
+- телеметрія
+- стан системи
+- місії
