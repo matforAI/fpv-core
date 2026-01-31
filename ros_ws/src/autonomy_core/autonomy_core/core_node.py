@@ -5,22 +5,25 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import LaserScan
 import json
+import os
 
-from autonomy_core.state_machine import StateMachine, State
 from autonomy_core.mission_manager import MissionManager
 from autonomy_core.target_tracker import TargetTracker
-from autonomy_core.failsafe import FailSafe
+from autonomy_core.priority_selector import PrioritySelector
+from autonomy_core.return_home import ReturnHome
 from autonomy_core.health_monitor import HealthMonitor
 from autonomy_core.blackbox import BlackBox
-from autonomy_core.return_home import ReturnHome
+from autonomy_core.failsafe import FailSafe
+from autonomy_core.swarm_sync import SwarmSync
+from autonomy_core.anti_collision import AntiCollision
 
 from autonomy_core.behavior_tree import (
-    Status,
-    Condition,
-    Action,
     Selector,
-    Sequence
+    Sequence,
+    Condition,
+    Action
 )
 
 
@@ -29,50 +32,72 @@ class AutonomyCore(Node):
     def __init__(self):
         super().__init__("autonomy_core")
 
+        drone_id = os.getenv("DRONE_ID", "drone_1")
+
+        # ---------- subscriptions ----------
         self.create_subscription(String, "/detections", self.on_detection, 10)
         self.create_subscription(Odometry, "/odometry/filtered", self.on_odom, 10)
+        self.create_subscription(LaserScan, "/scan", self.on_scan, 10)
+        self.create_subscription(String, "/swarm/status", self.on_swarm, 10)
 
+        # ---------- publishers ----------
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel_autonomy", 10)
         self.health_pub = self.create_publisher(String, "/core/health", 10)
+        self.swarm_pub = self.create_publisher(String, "/swarm/status", 10)
 
+        # ---------- modules ----------
         self.mission = MissionManager(self)
         self.tracker = TargetTracker(640)
-        self.failsafe = FailSafe()
+        self.selector = PrioritySelector()
+        self.rth = ReturnHome()
         self.health = HealthMonitor()
         self.blackbox = BlackBox()
-        self.rth = ReturnHome()
+        self.failsafe = FailSafe()
+        self.swarm = SwarmSync(drone_id)
+        self.anticoll = AntiCollision(min_dist=1.5)
 
-        self.goal_sent = False
         self.cmd = Twist()
+        self.goal_sent = False
+        self.position = (0.0, 0.0)
+        self.current_state = "INIT"
 
-        # -------- Behavior Tree --------
+        # ---------- BEHAVIOR TREE ----------
         self.bt = Selector([
-            # FAIL → RETURN HOME
+
+            # 🚨 ANTI COLLISION (TOP PRIORITY)
+            Sequence([
+                Condition(lambda: self.anticoll.danger()),
+                Action(self.stop_collision)
+            ]),
+
+            # 🔁 RETURN HOME
             Sequence([
                 Condition(lambda: not self.failsafe.odom_ok()),
                 Action(self.return_home)
             ]),
 
-            # TRACK TARGET
+            # 🎯 TRACK TARGET
             Sequence([
-                Condition(lambda: self.failsafe.detection_alive()),
+                Condition(lambda: self.selector.best() is not None),
                 Action(self.track_target)
             ]),
 
-            # NAVIGATION
+            # 🧭 NAVIGATION
             Action(self.navigate)
         ])
 
         self.timer = self.create_timer(0.1, self.loop)
-
-        self.get_logger().info("AUTONOMY CORE + RETURN HOME ONLINE")
+        self.get_logger().info("ANTI-COLLISION ACTIVE")
 
     # ---------------- callbacks ----------------
 
+    def on_scan(self, msg):
+        self.anticoll.update_scan(msg)
+
     def on_detection(self, msg):
         try:
-            cx, _, _, _ = msg.data.split(",")
-            self.tracker.update_bbox(float(cx))
+            objects = json.loads(msg.data)
+            self.selector.update(objects)
             self.failsafe.update_detection()
         except:
             pass
@@ -80,22 +105,34 @@ class AutonomyCore(Node):
     def on_odom(self, msg):
         self.failsafe.update_odom()
         self.rth.update_home(msg)
+        self.position = (
+            msg.pose.pose.position.x,
+            msg.pose.pose.position.y
+        )
 
-    # ---------------- BT ACTIONS ----------------
+    def on_swarm(self, msg):
+        try:
+            self.swarm.update_peer(json.loads(msg.data))
+        except:
+            pass
 
-    def return_home(self):
-        home = self.rth.get_home()
-        if home:
-            self.mission.send_goal(home[0], home[1])
-            self.blackbox.log("RTH", f"{home}")
+    # ---------------- BT actions ----------------
+
+    def stop_collision(self):
         self.cmd.linear.x = 0.0
         self.cmd.angular.z = 0.0
+        self.current_state = "ANTI_COLLISION"
+        self.blackbox.log("SAFETY", "OBSTACLE")
 
     def track_target(self):
+        obj = self.selector.best()
+        if not obj:
+            return
+        self.tracker.update_bbox(obj["cx"])
         err = self.tracker.get_yaw_error()
-        self.cmd.linear.x = 0.0
         self.cmd.angular.z = -err * 1.2
-        self.blackbox.log("BT", "TRACK")
+        self.cmd.linear.x = 0.0
+        self.current_state = "TRACK"
 
     def navigate(self):
         if not self.goal_sent:
@@ -103,9 +140,17 @@ class AutonomyCore(Node):
             self.goal_sent = True
         self.cmd.linear.x = 0.0
         self.cmd.angular.z = 0.0
-        self.blackbox.log("BT", "NAV")
+        self.current_state = "NAV"
 
-    # ---------------- LOOP ----------------
+    def return_home(self):
+        home = self.rth.get_home()
+        if home:
+            self.mission.send_goal(home[0], home[1])
+        self.cmd.linear.x = 0.0
+        self.cmd.angular.z = 0.0
+        self.current_state = "RTH"
+
+    # ---------------- loop ----------------
 
     def loop(self):
 
@@ -118,6 +163,16 @@ class AutonomyCore(Node):
 
         self.health_pub.publish(
             String(data=json.dumps(self.health.get()))
+        )
+
+        self.swarm_pub.publish(
+            String(data=json.dumps(
+                self.swarm.pack(
+                    self.current_state,
+                    self.position[0],
+                    self.position[1]
+                )
+            ))
         )
 
 
