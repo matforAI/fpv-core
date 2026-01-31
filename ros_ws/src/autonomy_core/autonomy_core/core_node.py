@@ -8,6 +8,7 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import String
 
 from autonomy_core.state_machine import StateMachine, State
+from autonomy_core.mission_manager import MissionManager
 
 
 class AutonomyCore(Node):
@@ -39,10 +40,13 @@ class AutonomyCore(Node):
         self.odom_ok = False
 
         self.sm = StateMachine()
+        self.mission = MissionManager(self)
 
-        self.timer = self.create_timer(0.1, self.loop)
+        self.goal_sent = False
 
-        self.get_logger().info("AUTONOMY CORE + STATE MACHINE STARTED")
+        self.timer = self.create_timer(0.2, self.loop)
+
+        self.get_logger().info("AUTONOMY CORE ONLINE")
 
     def on_detection(self, msg):
         self.has_detection = True
@@ -57,19 +61,21 @@ class AutonomyCore(Node):
             odom_ok=self.odom_ok
         )
 
+        # если разрешено движение — отправляем миссию
+        if state == State.MOVE and not self.goal_sent:
+            self.mission.send_goal(5.0, 0.0)
+            self.goal_sent = True
+
         cmd = Twist()
 
-        if state == State.IDLE:
-            pass
+        if state == State.MOVE:
+            cmd.linear.x = 0.0   # Nav2 рулит сам
 
-        elif state == State.MOVE:
-            cmd.linear.x = 0.4
-
-        elif state == State.HOLD:
+        if state == State.HOLD:
             cmd.linear.x = 0.0
             cmd.angular.z = 0.0
 
-        elif state == State.FAIL:
+        if state == State.FAIL:
             cmd.linear.x = 0.0
             cmd.angular.z = 0.0
 
