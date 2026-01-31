@@ -14,21 +14,26 @@ from autonomy_core.failsafe import FailSafe
 from autonomy_core.health_monitor import HealthMonitor
 from autonomy_core.blackbox import BlackBox
 
+from autonomy_core.behavior_tree import (
+    Status,
+    Condition,
+    Action,
+    Selector,
+    Sequence
+)
+
 
 class AutonomyCore(Node):
 
     def __init__(self):
         super().__init__("autonomy_core")
 
-        # subs
         self.create_subscription(String, "/detections", self.on_detection, 10)
         self.create_subscription(Odometry, "/odometry/filtered", self.on_odom, 10)
 
-        # pubs
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel_autonomy", 10)
         self.health_pub = self.create_publisher(String, "/core/health", 10)
 
-        # modules
         self.sm = StateMachine()
         self.mission = MissionManager(self)
         self.tracker = TargetTracker(640)
@@ -37,9 +42,26 @@ class AutonomyCore(Node):
         self.blackbox = BlackBox()
 
         self.goal_sent = False
+        self.cmd = Twist()
+
+        # ---------- Behavior Tree ----------
+        self.bt = Selector([
+            Sequence([
+                Condition(lambda: not self.failsafe.odom_ok()),
+                Action(self.fail_stop)
+            ]),
+            Sequence([
+                Condition(lambda: self.failsafe.detection_alive()),
+                Action(self.track_target)
+            ]),
+            Action(self.navigate)
+        ])
+
         self.timer = self.create_timer(0.1, self.loop)
 
-        self.get_logger().info("AUTONOMY CORE FULL SYSTEM ONLINE")
+        self.get_logger().info("AUTONOMY CORE + BEHAVIOR TREE ONLINE")
+
+    # ---------------- callbacks ----------------
 
     def on_detection(self, msg):
         try:
@@ -52,42 +74,41 @@ class AutonomyCore(Node):
     def on_odom(self, msg):
         self.failsafe.update_odom()
 
+    # ---------------- BT actions ----------------
+
+    def fail_stop(self):
+        self.cmd.linear.x = 0.0
+        self.cmd.angular.z = 0.0
+        self.blackbox.log("BT", "FAILSAFE")
+
+    def track_target(self):
+        err = self.tracker.get_yaw_error()
+        self.cmd.linear.x = 0.0
+        self.cmd.angular.z = -err * 1.2
+        self.blackbox.log("BT", "TRACK")
+
+    def navigate(self):
+        if not self.goal_sent:
+            self.mission.send_goal(5.0, 0.0)
+            self.goal_sent = True
+        self.cmd.linear.x = 0.0
+        self.cmd.angular.z = 0.0
+        self.blackbox.log("BT", "NAVIGATE")
+
+    # ---------------- loop ----------------
+
     def loop(self):
 
         self.health.tick()
 
-        odom_ok = self.failsafe.odom_ok()
-        det_ok = self.failsafe.detection_alive()
+        self.cmd = Twist()
+        self.bt.tick()
 
-        state = self.sm.update(det_ok, odom_ok)
+        self.cmd_pub.publish(self.cmd)
 
-        cmd = Twist()
-
-        # NAVIGATION
-        if state == State.MOVE:
-            if not self.goal_sent:
-                self.mission.send_goal(5.0, 0.0)
-                self.goal_sent = True
-
-        # TRACKING
-        if state == State.HOLD:
-            yaw_error = self.tracker.get_yaw_error()
-            cmd.angular.z = -yaw_error * 1.2
-
-        # FAILSAFE
-        if state == State.FAIL:
-            cmd.linear.x = 0.0
-            cmd.angular.z = 0.0
-
-        self.cmd_pub.publish(cmd)
-
-        # health topic
         self.health_pub.publish(
             String(data=json.dumps(self.health.get()))
         )
-
-        # blackbox log
-        self.blackbox.log("state", state.name)
 
 
 def main():
