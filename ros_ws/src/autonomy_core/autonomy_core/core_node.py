@@ -12,6 +12,7 @@ from autonomy_core.mission_manager import MissionManager
 from autonomy_core.target_tracker import TargetTracker
 from autonomy_core.failsafe import FailSafe
 from autonomy_core.health_monitor import HealthMonitor
+from autonomy_core.blackbox import BlackBox
 
 
 class AutonomyCore(Node):
@@ -19,22 +20,26 @@ class AutonomyCore(Node):
     def __init__(self):
         super().__init__("autonomy_core")
 
+        # subs
         self.create_subscription(String, "/detections", self.on_detection, 10)
         self.create_subscription(Odometry, "/odometry/filtered", self.on_odom, 10)
 
+        # pubs
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel_autonomy", 10)
         self.health_pub = self.create_publisher(String, "/core/health", 10)
 
+        # modules
         self.sm = StateMachine()
         self.mission = MissionManager(self)
         self.tracker = TargetTracker(640)
         self.failsafe = FailSafe()
         self.health = HealthMonitor()
+        self.blackbox = BlackBox()
 
         self.goal_sent = False
         self.timer = self.create_timer(0.1, self.loop)
 
-        self.get_logger().info("CORE + HEALTH ONLINE")
+        self.get_logger().info("AUTONOMY CORE FULL SYSTEM ONLINE")
 
     def on_detection(self, msg):
         try:
@@ -58,22 +63,31 @@ class AutonomyCore(Node):
 
         cmd = Twist()
 
-        if state == State.MOVE and not self.goal_sent:
-            self.mission.send_goal(5.0, 0.0)
-            self.goal_sent = True
+        # NAVIGATION
+        if state == State.MOVE:
+            if not self.goal_sent:
+                self.mission.send_goal(5.0, 0.0)
+                self.goal_sent = True
 
+        # TRACKING
         if state == State.HOLD:
-            cmd.angular.z = -self.tracker.get_yaw_error() * 1.2
+            yaw_error = self.tracker.get_yaw_error()
+            cmd.angular.z = -yaw_error * 1.2
 
+        # FAILSAFE
         if state == State.FAIL:
             cmd.linear.x = 0.0
             cmd.angular.z = 0.0
 
         self.cmd_pub.publish(cmd)
 
+        # health topic
         self.health_pub.publish(
             String(data=json.dumps(self.health.get()))
         )
+
+        # blackbox log
+        self.blackbox.log("state", state.name)
 
 
 def main():
