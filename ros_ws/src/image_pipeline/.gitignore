@@ -1,0 +1,6 @@
+*pyc
+.vscode/
+*/doc/generated
+build
+install
+log
