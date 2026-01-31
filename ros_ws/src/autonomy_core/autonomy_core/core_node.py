@@ -2,9 +2,12 @@
 
 import rclpy
 from rclpy.node import Node
+
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String
+
+from autonomy_core.state_machine import StateMachine, State
 
 
 class AutonomyCore(Node):
@@ -32,24 +35,43 @@ class AutonomyCore(Node):
             10
         )
 
-        self.target_detected = False
+        self.has_detection = False
+        self.odom_ok = False
+
+        self.sm = StateMachine()
+
         self.timer = self.create_timer(0.1, self.loop)
 
-        self.get_logger().info("AUTONOMY CORE ONLINE")
+        self.get_logger().info("AUTONOMY CORE + STATE MACHINE STARTED")
 
     def on_detection(self, msg):
-        self.target_detected = True
+        self.has_detection = True
 
     def on_odom(self, msg):
-        pass
+        self.odom_ok = True
 
     def loop(self):
+
+        state = self.sm.update(
+            has_detection=self.has_detection,
+            odom_ok=self.odom_ok
+        )
+
         cmd = Twist()
 
-        if self.target_detected:
+        if state == State.IDLE:
+            pass
+
+        elif state == State.MOVE:
+            cmd.linear.x = 0.4
+
+        elif state == State.HOLD:
             cmd.linear.x = 0.0
-        else:
-            cmd.linear.x = 0.3
+            cmd.angular.z = 0.0
+
+        elif state == State.FAIL:
+            cmd.linear.x = 0.0
+            cmd.angular.z = 0.0
 
         self.cmd_pub.publish(cmd)
 
